@@ -30,7 +30,7 @@ metadata:
     eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/my-iam-role
 ```
 
-Ensure the pod’s containers (including `istio-proxy`) run with this service account so `AWS_REGION` is present. If `AWS_REGION` is missing, platform detection still uses IMDS unless you set the proxy environment variable `CLOUD_PLATFORM=aws` (or another supported platform value) so Istio skips discovery.
+Ensure the pod's containers (including `istio-proxy`) run with this service account so `AWS_REGION` is present. If `AWS_REGION` is missing, platform detection still uses IMDS unless you set the proxy environment variable `CLOUD_PLATFORM=aws` (or another supported platform value) so Istio skips discovery.
 
 Reference: [IAM roles for service accounts](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html).
 
@@ -96,7 +96,7 @@ Adjust `AWS_AVAILABILITY_ZONE` sourcing to match how your cluster exposes zone t
 Injected pods need the same three variables on the **`istio-proxy`** container. Typical approaches:
 
 - Patch the workload template (Deployment, etc.) with the `env` entries above.
-- Use your organization’s standard mutating admission to inject these env vars for namespaces where Istio sidecars run.
+- Use your organization's standard mutating admission to inject these env vars for namespaces where Istio sidecars run.
 
 `ISTIO_META_*` metadata does **not** replace these variables; bootstrap reads **`AWS_REGION`**, **`AWS_AVAILABILITY_ZONE`**, and **`K8S_NODE_NAME`** explicitly.
 
@@ -111,7 +111,7 @@ kubectl exec -n istio-system deploy/istio-ingressgateway -c istio-proxy -- \
 
 ## Related AWS guidance
 
-- [EKS best practices – IAM](https://docs.aws.amazon.com/eks/latest/best-practices/identity-and-access-management.html) (IMDSv2, hop limit).
+- [EKS best practices - IAM](https://docs.aws.amazon.com/eks/latest/best-practices/identity-and-access-management.html) (IMDSv2, hop limit).
 - [Configure the instance metadata service](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html).
 
 If pods cannot reach IMDS (for example hop limit `1` while using bridge networking), supplying all three environment variables avoids depending on the metadata endpoint for bootstrap.
