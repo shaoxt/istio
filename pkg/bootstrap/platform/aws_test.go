@@ -80,6 +80,49 @@ func TestIsAWS(t *testing.T) {
 	}
 }
 
+func TestIsAWSWhenAWSRegionEnvSet(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	if !IsAWS(false) {
+		t.Fatal("expected IsAWS true when AWS_REGION is set")
+	}
+}
+
+func TestNewAWSMetadataFromEnvSkipsIMDS(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	t.Setenv(EnvAWSAvailabilityZone, "us-west-2a")
+	t.Setenv(EnvNodeName, "ip-10-0-0-1.ec2.internal")
+
+	server, url := setupHTTPServer(map[string]handlerFunc{
+		"/placement/region":           errorHandler,
+		"/placement/availability-zone": errorHandler,
+		"/instance-id":                errorHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = url.String()
+
+	e := NewAWS(false)
+	loc := e.Locality()
+	want := &core.Locality{Region: "us-west-2", Zone: "us-west-2a"}
+	if !reflect.DeepEqual(loc, want) {
+		t.Errorf("unexpected locality. want :%v, got :%v", want, loc)
+	}
+	md := e.Metadata()
+	if md[AWSRegion] != "us-west-2" || md[AWSAvailabilityZone] != "us-west-2a" || md[AWSInstanceID] != "ip-10-0-0-1.ec2.internal" {
+		t.Errorf("unexpected metadata: %v", md)
+	}
+}
+
+func TestNewAWSMetadataFromEnvUsesK8SNodeName(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	t.Setenv(EnvAWSAvailabilityZone, "us-west-2b")
+	t.Setenv(EnvNodeName, "node-from-k8s")
+
+	e := NewAWS(false)
+	if e.Metadata()[AWSInstanceID] != "node-from-k8s" {
+		t.Errorf("expected K8S_NODE_NAME as instance id, got %v", e.Metadata())
+	}
+}
+
 func errorHandler(writer http.ResponseWriter, _ *http.Request) {
 	writer.WriteHeader(http.StatusInternalServerError)
 }
