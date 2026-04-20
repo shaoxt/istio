@@ -15,6 +15,7 @@
 package platform
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -28,6 +29,13 @@ const (
 	AWSRegion           = "aws_region"
 	AWSAvailabilityZone = "aws_availability_zone"
 	AWSInstanceID       = "aws_instance_id"
+
+	// EnvAWSRegion is the standard AWS region variable (e.g. set by IRSA on EKS).
+	EnvAWSRegion = "AWS_REGION"
+	// EnvAWSAvailabilityZone may be set to avoid IMDS calls for zone (e.g. from topology labels).
+	EnvAWSAvailabilityZone = "AWS_AVAILABILITY_ZONE"
+	// EnvNodeName should be the Kubernetes node name (e.g. from spec.nodeName).
+	EnvNodeName = "K8S_NODE_NAME"
 )
 
 var (
@@ -44,6 +52,11 @@ var (
 
 // IsAWS returns whether the platform for bootstrapping is Amazon Web Services.
 func IsAWS(ipv6 bool) bool {
+	// When AWS_REGION is set (e.g. EKS with IRSA), treat as AWS without calling IMDS.
+	// This avoids IMDSv2 token throttling during large bursts of concurrent pod starts.
+	if strings.TrimSpace(os.Getenv(EnvAWSRegion)) != "" {
+		return true
+	}
 	headers := requestHeaders(ipv6)
 	info, err := getAWSInfo("iam/info", ipv6, headers)
 	return err == nil && strings.Contains(info, "arn:aws:iam")
@@ -56,15 +69,42 @@ type awsEnv struct {
 }
 
 // NewAWS returns a platform environment customized for AWS.
-// Metadata returned by the AWS Environment is taken link-local address running on each node.
+// Metadata is normally read from the instance metadata service (link-local on the node).
+// If AWS_REGION, AWS_AVAILABILITY_ZONE, and K8S_NODE_NAME are all set,
+// metadata is taken from the environment and IMDS is not contacted.
 func NewAWS(ipv6 bool) Environment {
-	headers := requestHeaders(ipv6)
+	region := strings.TrimSpace(os.Getenv(EnvAWSRegion))
+	availabilityZone := strings.TrimSpace(os.Getenv(EnvAWSAvailabilityZone))
+	instanceID := awsInstanceIDFromEnv()
 
-	return &awsEnv{
-		region:           getRegion(ipv6, headers),
-		availabilityZone: getAvailabilityZone(ipv6, headers),
-		instanceID:       getInstanceID(ipv6, headers),
+	if region != "" && availabilityZone != "" && instanceID != "" {
+		log.Debug("using AWS region, zone, and instance identity from environment variables; skipping IMDS")
+		return &awsEnv{
+			region:           region,
+			availabilityZone: availabilityZone,
+			instanceID:       instanceID,
+		}
 	}
+
+	headers := requestHeaders(ipv6)
+	if region == "" {
+		region = getRegion(ipv6, headers)
+	}
+	if availabilityZone == "" {
+		availabilityZone = getAvailabilityZone(ipv6, headers)
+	}
+	if instanceID == "" {
+		instanceID = getInstanceID(ipv6, headers)
+	}
+	return &awsEnv{
+		region:           region,
+		availabilityZone: availabilityZone,
+		instanceID:       instanceID,
+	}
+}
+
+func awsInstanceIDFromEnv() string {
+	return strings.TrimSpace(os.Getenv(EnvNodeName))
 }
 
 func requestHeaders(ipv6 bool) map[string]string {
