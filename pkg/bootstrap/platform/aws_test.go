@@ -46,6 +46,9 @@ func TestAWSLocality(t *testing.T) {
 
 	for _, v := range cases {
 		t.Run(v.name, func(tt *testing.T) {
+			tt.Setenv(EnvAWSRegion, "")
+			tt.Setenv(EnvAWSAvailabilityZone, "")
+			tt.Setenv(EnvNodeName, "")
 			server, url := setupHTTPServer(v.handlers)
 			defer server.Close()
 			awsMetadataIPv4URL = url.String()
@@ -69,6 +72,9 @@ func TestIsAWS(t *testing.T) {
 
 	for _, v := range cases {
 		t.Run(v.name, func(tt *testing.T) {
+			tt.Setenv(EnvAWSRegion, "")
+			tt.Setenv(EnvAWSAvailabilityZone, "")
+			tt.Setenv(EnvNodeName, "")
 			server, url := setupHTTPServer(v.handlers)
 			defer server.Close()
 			awsMetadataIPv4URL = url.String()
@@ -93,9 +99,9 @@ func TestNewAWSMetadataFromEnvSkipsIMDS(t *testing.T) {
 	t.Setenv(EnvNodeName, "ip-10-0-0-1.ec2.internal")
 
 	server, url := setupHTTPServer(map[string]handlerFunc{
-		"/placement/region":           errorHandler,
+		"/placement/region":            errorHandler,
 		"/placement/availability-zone": errorHandler,
-		"/instance-id":                errorHandler,
+		"/instance-id":                 errorHandler,
 	})
 	defer server.Close()
 	awsMetadataIPv4URL = url.String()

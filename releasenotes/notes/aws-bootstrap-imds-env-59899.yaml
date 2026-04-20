@@ -1,0 +1,8 @@
+apiVersion: release-notes/v2
+kind: feature
+area: installation
+issue:
+- 59899
+releaseNotes:
+- |
+  **Added** optional AWS proxy bootstrap metadata via environment variables (`AWS_REGION`, `AWS_AVAILABILITY_ZONE`, and `K8S_NODE_NAME`) so `istio-proxy` can skip EC2 instance metadata (IMDS) calls, reducing IMDSv2 token throttling when many pods start on the same node on EKS.
