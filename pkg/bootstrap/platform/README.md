@@ -52,19 +52,19 @@ Add this under the **`istio-proxy`** container (ingress gateway, egress gateway,
 
 There is no single standard field on every pod that always contains the zone. You must ensure the proxy sees a zone string; common approaches:
 
-1. **Pod label** (if your cluster or admission controller sets `topology.kubernetes.io/zone` on the pod):
+- **Pod label** (if your cluster or admission controller sets `topology.kubernetes.io/zone` on the pod):
 
-   ```yaml
-   env:
-     - name: AWS_AVAILABILITY_ZONE
-       valueFrom:
-         fieldRef:
-           fieldPath: metadata.labels['topology.kubernetes.io/zone']
-   ```
+  ```yaml
+  env:
+    - name: AWS_AVAILABILITY_ZONE
+      valueFrom:
+        fieldRef:
+          fieldPath: metadata.labels['topology.kubernetes.io/zone']
+  ```
 
-2. **Mesh-wide injection** via policy (e.g. Kyverno, OPA Gatekeeper, or a custom mutating webhook) that copies zone from the **node** onto the pod or injects env vars.
+- **Mesh-wide injection** via policy (e.g. Kyverno, OPA Gatekeeper, or a custom mutating webhook) that copies zone from the **node** onto the pod or injects env vars.
 
-3. **Per-node-pool / per-zone Helm values** if deployments are pinned to one AZ.
+- **Per-node-pool / per-zone Helm values** if deployments are pinned to one AZ.
 
 If `AWS_AVAILABILITY_ZONE` is empty, Istio will still try to read the zone from IMDS (subject to hop limit and throttling).
 
