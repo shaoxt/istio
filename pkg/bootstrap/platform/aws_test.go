@@ -129,6 +129,54 @@ func TestNewAWSMetadataFromEnvUsesK8SNodeName(t *testing.T) {
 	}
 }
 
+// When only some AWS metadata env vars are set, NewAWS must merge from IMDS for the rest (no panic).
+func TestNewAWSPartialEnvOnlyRegionMergesFromIMDS(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	t.Setenv(EnvAWSAvailabilityZone, "")
+	t.Setenv(EnvNodeName, "")
+
+	server, u := setupHTTPServer(map[string]handlerFunc{
+		"/placement/availability-zone": zoneHandler,
+		"/instance-id":                 ec2InstanceIDHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = u.String()
+
+	e := NewAWS(false)
+	want := &core.Locality{Region: "us-west-2", Zone: "us-west-2b"}
+	if got := e.Locality(); !reflect.DeepEqual(got, want) {
+		t.Errorf("unexpected locality. want %v, got %v", want, got)
+	}
+	md := e.Metadata()
+	if got := md[AWSInstanceID]; got != "i-imdsinstance" {
+		t.Errorf("expected instance id from IMDS, got %q (metadata=%v)", got, md)
+	}
+}
+
+func TestNewAWSPartialEnvRegionAndZoneMergesInstanceFromIMDS(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "eu-central-1")
+	t.Setenv(EnvAWSAvailabilityZone, "eu-central-1a")
+	t.Setenv(EnvNodeName, "")
+
+	server, u := setupHTTPServer(map[string]handlerFunc{
+		"/placement/region":            errorHandler,
+		"/placement/availability-zone": errorHandler,
+		"/instance-id":                 ec2InstanceIDHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = u.String()
+
+	e := NewAWS(false)
+	want := &core.Locality{Region: "eu-central-1", Zone: "eu-central-1a"}
+	if got := e.Locality(); !reflect.DeepEqual(got, want) {
+		t.Errorf("unexpected locality. want %v, got %v", want, got)
+	}
+	md := e.Metadata()
+	if got := md[AWSInstanceID]; got != "i-imdsinstance" {
+		t.Errorf("expected instance id from IMDS, got %q (metadata=%v)", got, md)
+	}
+}
+
 func errorHandler(writer http.ResponseWriter, _ *http.Request) {
 	writer.WriteHeader(http.StatusInternalServerError)
 }
@@ -147,6 +195,11 @@ func iamInfoHandler(writer http.ResponseWriter, _ *http.Request) {
 	writer.WriteHeader(http.StatusOK)
 	// nolint: lll
 	writer.Write([]byte("{\n\"Code\" : \"Success\",\n\"LastUpdated\" : \"2022-03-18T05:04:31Z\",\n\"InstanceProfileArn\" : \"arn:aws:iam::614624372165:instance-profile/sam-processing0000120190916053337315200000004\",\n\"InstanceProfileId\" : \"AIPAY6GTXUXC3LLJY7OG7\"\n\t  }"))
+}
+
+func ec2InstanceIDHandler(writer http.ResponseWriter, _ *http.Request) {
+	writer.WriteHeader(http.StatusOK)
+	writer.Write([]byte("i-imdsinstance"))
 }
 
 func setupHTTPServer(handlers map[string]handlerFunc) (*httptest.Server, *url.URL) {
