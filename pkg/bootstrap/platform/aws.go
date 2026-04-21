@@ -88,13 +88,13 @@ func NewAWS(ipv6 bool) Environment {
 
 	headers := requestHeaders(ipv6)
 	if region == "" {
-		region = getRegion(ipv6, headers)
+		region, _ = getAWSInfo("placement/region", ipv6, headers)
 	}
 	if availabilityZone == "" {
-		availabilityZone = getAvailabilityZone(ipv6, headers)
+		availabilityZone, _ = getAWSInfo("placement/availability-zone", ipv6, headers)
 	}
 	if instanceID == "" {
-		instanceID = getInstanceID(ipv6, headers)
+		instanceID, _ = getAWSInfo("instance-id", ipv6, headers)
 	}
 	return &awsEnv{
 		region:           region,
@@ -162,23 +162,6 @@ func getAWSInfo(path string, ipv6 bool, headers map[string]string) (string, erro
 		return "", err
 	}
 	return resp.String(), nil
-}
-
-// getRegion returns the Region that the instance is running in.
-func getRegion(ipv6 bool, headers map[string]string) string {
-	region, _ := getAWSInfo("placement/region", ipv6, headers)
-	return region
-}
-
-// getAvailabilityZone returns the AvailabilityZone that the instance is running in.
-func getAvailabilityZone(ipv6 bool, headers map[string]string) string {
-	az, _ := getAWSInfo("placement/availability-zone", ipv6, headers)
-	return az
-}
-
-func getInstanceID(ipv6 bool, headers map[string]string) string {
-	instance, _ := getAWSInfo("instance-id", ipv6, headers)
-	return instance
 }
 
 func getToken(ipv6 bool) string {
