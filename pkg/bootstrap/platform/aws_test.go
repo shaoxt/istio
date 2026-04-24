@@ -129,6 +129,122 @@ func TestNewAWSMetadataFromEnvUsesK8SNodeName(t *testing.T) {
 	}
 }
 
+// K8S_NODE_NAME with surrounding whitespace is trimmed; IMDS must not be used when all three vars are non-empty after trim.
+func TestNewAWSMetadataFromEnvK8SNodeNameTrimsWhitespace(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	t.Setenv(EnvAWSAvailabilityZone, "us-west-2a")
+	t.Setenv(EnvNodeName, "  \tmy-eks-node\n  ")
+
+	server, url := setupHTTPServer(map[string]handlerFunc{
+		"/placement/region":            errorHandler,
+		"/placement/availability-zone": errorHandler,
+		"/instance-id":                 errorHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = url.String()
+
+	e := NewAWS(false)
+	if got := e.Metadata()[AWSInstanceID]; got != "my-eks-node" {
+		t.Errorf("expected trimmed K8S_NODE_NAME as instance id, got %q (metadata=%v)", got, e.Metadata())
+	}
+}
+
+// Whitespace-only K8S_NODE_NAME is treated as unset; instance id comes from IMDS when region and zone are set in env.
+func TestNewAWSMetadataK8SNodeNameWhitespaceOnlyFallsBackToIMDS(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	t.Setenv(EnvAWSAvailabilityZone, "us-west-2c")
+	t.Setenv(EnvNodeName, "  \t  ")
+
+	server, url := setupHTTPServer(map[string]handlerFunc{
+		"/instance-id": ec2InstanceIDHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = url.String()
+
+	e := NewAWS(false)
+	if got := e.Metadata()[AWSInstanceID]; got != "i-imdsinstance" {
+		t.Errorf("expected instance id from IMDS, got %q (metadata=%v)", got, e.Metadata())
+	}
+}
+
+// EC2-style internal DNS is a common real-world K8S_NODE_NAME on EKS.
+func TestNewAWSMetadataFromEnvK8SNodeNameFQDNStyle(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "ap-southeast-2")
+	t.Setenv(EnvAWSAvailabilityZone, "ap-southeast-2b")
+	t.Setenv(EnvNodeName, "ip-10-0-12-34.ap-southeast-2.compute.internal")
+
+	e := NewAWS(false)
+	want := "ip-10-0-12-34.ap-southeast-2.compute.internal"
+	if got := e.Metadata()[AWSInstanceID]; got != want {
+		t.Errorf("expected instance id %q, got %q", want, got)
+	}
+}
+
+// AWS_AVAILABILITY_ZONE with surrounding whitespace is trimmed for locality and metadata.
+func TestNewAWSMetadataFromEnvAvailabilityZoneTrimsWhitespace(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "eu-central-1")
+	t.Setenv(EnvAWSAvailabilityZone, "  eu-central-1c\t")
+	t.Setenv(EnvNodeName, "node-z")
+
+	server, url := setupHTTPServer(map[string]handlerFunc{
+		"/placement/availability-zone": errorHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = url.String()
+
+	e := NewAWS(false)
+	want := &core.Locality{Region: "eu-central-1", Zone: "eu-central-1c"}
+	if got := e.Locality(); !reflect.DeepEqual(got, want) {
+		t.Errorf("unexpected locality. want %v, got %v", want, got)
+	}
+	if got := e.Metadata()[AWSAvailabilityZone]; got != "eu-central-1c" {
+		t.Errorf("expected trimmed zone in metadata, got %q", got)
+	}
+}
+
+// Whitespace-only AWS_AVAILABILITY_ZONE is treated as unset; zone is read from IMDS.
+func TestNewAWSMetadataAvailabilityZoneWhitespaceOnlyFallsBackToIMDS(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "us-west-2")
+	t.Setenv(EnvAWSAvailabilityZone, "\n  \t ")
+	t.Setenv(EnvNodeName, "node-a")
+
+	server, url := setupHTTPServer(map[string]handlerFunc{
+		"/placement/availability-zone": zoneHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = url.String()
+
+	e := NewAWS(false)
+	want := &core.Locality{Region: "us-west-2", Zone: "us-west-2b"}
+	if got := e.Locality(); !reflect.DeepEqual(got, want) {
+		t.Errorf("unexpected locality. want %v, got %v", want, got)
+	}
+}
+
+// Only AWS_AVAILABILITY_ZONE set in env: region and instance id must be merged from IMDS.
+func TestNewAWSPartialEnvOnlyAvailabilityZoneMergesFromIMDS(t *testing.T) {
+	t.Setenv(EnvAWSRegion, "")
+	t.Setenv(EnvAWSAvailabilityZone, "ca-central-1d")
+	t.Setenv(EnvNodeName, "")
+
+	server, u := setupHTTPServer(map[string]handlerFunc{
+		"/placement/region": regionHandler,
+		"/instance-id":      ec2InstanceIDHandler,
+	})
+	defer server.Close()
+	awsMetadataIPv4URL = u.String()
+
+	e := NewAWS(false)
+	want := &core.Locality{Region: "us-west-2", Zone: "ca-central-1d"}
+	if got := e.Locality(); !reflect.DeepEqual(got, want) {
+		t.Errorf("unexpected locality. want %v, got %v", want, got)
+	}
+	md := e.Metadata()
+	if md[AWSRegion] != "us-west-2" || md[AWSAvailabilityZone] != "ca-central-1d" || md[AWSInstanceID] != "i-imdsinstance" {
+		t.Errorf("unexpected metadata: %v", md)
+	}
+}
+
 // When only some AWS metadata env vars are set, NewAWS must merge from IMDS for the rest (no panic).
 func TestNewAWSPartialEnvOnlyRegionMergesFromIMDS(t *testing.T) {
 	t.Setenv(EnvAWSRegion, "us-west-2")
