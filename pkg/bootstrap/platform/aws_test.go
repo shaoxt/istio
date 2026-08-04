@@ -125,11 +125,11 @@ func TestNewAWSMetadataFromEnvUsesK8SNodeName(t *testing.T) {
 
 	e := NewAWS(false)
 	if e.Metadata()[AWSInstanceID] != "node-from-k8s" {
-		t.Errorf("expected K8S_NODE_NAME as instance id, got %v", e.Metadata())
+		t.Errorf("expected ISTIO_META_NODE_NAME as instance id, got %v", e.Metadata())
 	}
 }
 
-// K8S_NODE_NAME with surrounding whitespace is trimmed; IMDS must not be used when all three vars are non-empty after trim.
+// ISTIO_META_NODE_NAME with surrounding whitespace is trimmed; IMDS must not be used when all three vars are non-empty after trim.
 func TestNewAWSMetadataFromEnvK8SNodeNameTrimsWhitespace(t *testing.T) {
 	t.Setenv(EnvAWSRegion, "us-west-2")
 	t.Setenv(EnvAWSAvailabilityZone, "us-west-2a")
@@ -145,11 +145,11 @@ func TestNewAWSMetadataFromEnvK8SNodeNameTrimsWhitespace(t *testing.T) {
 
 	e := NewAWS(false)
 	if got := e.Metadata()[AWSInstanceID]; got != "my-eks-node" {
-		t.Errorf("expected trimmed K8S_NODE_NAME as instance id, got %q (metadata=%v)", got, e.Metadata())
+		t.Errorf("expected trimmed ISTIO_META_NODE_NAME as instance id, got %q (metadata=%v)", got, e.Metadata())
 	}
 }
 
-// Whitespace-only K8S_NODE_NAME is treated as unset; instance id comes from IMDS when region and zone are set in env.
+// Whitespace-only ISTIO_META_NODE_NAME is treated as unset; instance id comes from IMDS when region and zone are set in env.
 func TestNewAWSMetadataK8SNodeNameWhitespaceOnlyFallsBackToIMDS(t *testing.T) {
 	t.Setenv(EnvAWSRegion, "us-west-2")
 	t.Setenv(EnvAWSAvailabilityZone, "us-west-2c")
@@ -167,7 +167,7 @@ func TestNewAWSMetadataK8SNodeNameWhitespaceOnlyFallsBackToIMDS(t *testing.T) {
 	}
 }
 
-// EC2-style internal DNS is a common real-world K8S_NODE_NAME on EKS.
+// EC2-style internal DNS is a common real-world ISTIO_META_NODE_NAME on EKS.
 func TestNewAWSMetadataFromEnvK8SNodeNameFQDNStyle(t *testing.T) {
 	t.Setenv(EnvAWSRegion, "ap-southeast-2")
 	t.Setenv(EnvAWSAvailabilityZone, "ap-southeast-2b")

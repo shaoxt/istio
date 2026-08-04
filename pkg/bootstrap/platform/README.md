@@ -10,7 +10,7 @@ Istio can skip IMDS for AWS metadata when the proxy container has the right **en
 |----------|------|
 | `AWS_REGION` | If set, AWS platform detection does **not** call IMDS for `iam/info`. Often already present when using **IAM Roles for Service Accounts (IRSA)**. |
 | `AWS_AVAILABILITY_ZONE` | Availability zone used for locality (replaces `placement/availability-zone` from IMDS). |
-| `K8S_NODE_NAME` | Node identity used for `aws_instance_id` metadata (typically the node name, not the EC2 instance id). Replaces `instance-id` from IMDS. |
+| `ISTIO_META_NODE_NAME` | Node identity used for `aws_instance_id` metadata (typically the node name, not the EC2 instance id). Replaces `instance-id` from IMDS. |
 
 **Full IMDS bypass (no token `PUT`, no metadata `GET`s)** applies only when **all three** variables are non-empty. If only some are set, Istio fills the rest from IMDS as before.
 
@@ -34,13 +34,13 @@ Ensure the pod's containers (including `istio-proxy`) run with this service acco
 
 Reference: [IAM roles for service accounts](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html).
 
-## EKS: `K8S_NODE_NAME`
+## EKS: `ISTIO_META_NODE_NAME`
 
 Expose the Kubernetes node name to the proxy using the downward API:
 
 ```yaml
 env:
-  - name: K8S_NODE_NAME
+  - name: ISTIO_META_NODE_NAME
     valueFrom:
       fieldRef:
         fieldPath: spec.nodeName
@@ -76,7 +76,7 @@ Combine the three env entries on the `istio-proxy` container (order does not mat
 containers:
   - name: istio-proxy
     env:
-      - name: K8S_NODE_NAME
+      - name: ISTIO_META_NODE_NAME
         valueFrom:
           fieldRef:
             fieldPath: spec.nodeName
@@ -98,7 +98,7 @@ Injected pods need the same three variables on the **`istio-proxy`** container. 
 - Patch the workload template (Deployment, etc.) with the `env` entries above.
 - Use your organization's standard mutating admission to inject these env vars for namespaces where Istio sidecars run.
 
-`ISTIO_META_*` metadata does **not** replace these variables; bootstrap reads **`AWS_REGION`**, **`AWS_AVAILABILITY_ZONE`**, and **`K8S_NODE_NAME`** explicitly.
+`ISTIO_META_*` metadata does **not** replace these variables; bootstrap reads **`AWS_REGION`**, **`AWS_AVAILABILITY_ZONE`**, and **`ISTIO_META_NODE_NAME`** explicitly.
 
 ## Verify
 
@@ -106,7 +106,7 @@ After rollout, confirm the proxy sees the variables (names may vary if your shel
 
 ```bash
 kubectl exec -n istio-system deploy/istio-ingressgateway -c istio-proxy -- \
-  printenv AWS_REGION AWS_AVAILABILITY_ZONE K8S_NODE_NAME
+  printenv AWS_REGION AWS_AVAILABILITY_ZONE ISTIO_META_NODE_NAME
 ```
 
 ## Related AWS guidance

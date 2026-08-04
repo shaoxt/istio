@@ -35,7 +35,7 @@ const (
 	// EnvAWSAvailabilityZone may be set to avoid IMDS calls for zone (e.g. from topology labels).
 	EnvAWSAvailabilityZone = "AWS_AVAILABILITY_ZONE"
 	// EnvNodeName should be the Kubernetes node name (e.g. from spec.nodeName).
-	EnvNodeName = "K8S_NODE_NAME"
+	EnvNodeName = "ISTIO_META_NODE_NAME"
 )
 
 var (
@@ -70,7 +70,7 @@ type awsEnv struct {
 
 // NewAWS returns a platform environment customized for AWS.
 // Metadata is normally read from the instance metadata service (link-local on the node).
-// If AWS_REGION, AWS_AVAILABILITY_ZONE, and K8S_NODE_NAME are all set,
+// If AWS_REGION, AWS_AVAILABILITY_ZONE, and ISTIO_META_NODE_NAME are all set,
 // metadata is taken from the environment and IMDS is not contacted.
 func NewAWS(ipv6 bool) Environment {
 	region := strings.TrimSpace(os.Getenv(EnvAWSRegion))
