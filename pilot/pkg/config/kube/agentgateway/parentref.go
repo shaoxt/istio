@@ -43,12 +43,13 @@ type RouteParentReference struct {
 	// OriginalReference contains the original reference
 	OriginalReference gatewayv1.ParentReference
 	// Hostname is the hostname match of the Parent, if any
-	Hostname        string
-	BannedHostnames sets.Set[string]
-	ParentKey       AgwParentKey
-	ParentSection   gatewayv1.SectionName
-	Accepted        bool
-	ParentGateway   types.NamespacedName
+	Hostname               string
+	BannedHostnames        sets.Set[string]
+	ParentKey              AgwParentKey
+	ParentSection          gatewayv1.SectionName
+	Accepted               bool
+	ParentGateway          types.NamespacedName
+	ParentGatewayClassName string
 }
 
 var allowedParentReferences = sets.New(
@@ -91,10 +92,9 @@ func ReferenceAllowed(
 ) *ParentError {
 	if parentRef.Kind == gvk.Service.Kubernetes() {
 		key := parentRef.Namespace + "/" + parentRef.Name
-		svc := ptr.Flatten(krt.FetchOne(ctx.Krt, ctx.Services, krt.FilterKey(key)))
 
 		// check that the referenced svc exists
-		if svc == nil {
+		if !krt.ResourceExists(ctx.Krt, ctx.Services, key) {
 			return &ParentError{
 				Reason:  ParentErrorNotAccepted,
 				Message: fmt.Sprintf("parent service: %q not found", parentRef.Name),
@@ -103,8 +103,7 @@ func ReferenceAllowed(
 	} else if parentRef.Kind == gvk.ServiceEntry.Kubernetes() {
 		// check that the referenced svc entry exists
 		key := parentRef.Namespace + "/" + parentRef.Name
-		svcEntry := ptr.Flatten(krt.FetchOne(ctx.Krt, ctx.ServiceEntries, krt.FilterKey(key)))
-		if svcEntry == nil {
+		if !krt.ResourceExists(ctx.Krt, ctx.ServiceEntries, key) {
 			return &ParentError{
 				Reason:  ParentErrorNotAccepted,
 				Message: fmt.Sprintf("parent service entry: %q not found", parentRef.Name),
@@ -239,16 +238,17 @@ func extractParentReferenceInfo(ctx RouteContext, parents RouteParents, obj cont
 			deniedReason := ReferenceAllowed(ctx, pr, kind.Kubernetes(), pk, hostnames, localNamespace)
 
 			rpi := RouteParentReference{
-				ParentGateway:     pr.ParentGateway,
-				InternalName:      pr.InternalName,
-				InternalKind:      ir.Kind,
-				Hostname:          pr.OriginalHostname,
-				DeniedReason:      deniedReason,
-				OriginalReference: ref,
-				BannedHostnames:   bannedHostnames.Copy().Delete(pr.OriginalHostname),
-				ParentKey:         ir,
-				ParentSection:     pr.SectionName,
-				Accepted:          deniedReason == nil,
+				ParentGateway:          pr.ParentGateway,
+				InternalName:           pr.InternalName,
+				InternalKind:           ir.Kind,
+				Hostname:               pr.OriginalHostname,
+				DeniedReason:           deniedReason,
+				OriginalReference:      ref,
+				BannedHostnames:        bannedHostnames.Copy().Delete(pr.OriginalHostname),
+				ParentKey:              ir,
+				ParentSection:          pr.SectionName,
+				Accepted:               deniedReason == nil,
+				ParentGatewayClassName: pr.ParentGatewayClassName,
 			}
 			parentRefs = append(parentRefs, rpi)
 		}

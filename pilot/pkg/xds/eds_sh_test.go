@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 	"testing"
-	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -77,8 +76,8 @@ func TestSplitHorizonEds(t *testing.T) {
 	initRegistry(s, 4, []string{}, 4)
 
 	// Push contexts needs to be updated
-	s.Discovery.ConfigUpdate(&model.PushRequest{Full: true, Forced: true})
-	time.Sleep(time.Millisecond * 200) // give time for cache to clear
+	s.Discovery.ConfigUpdate(&model.PushRequest{Forced: true})
+	s.EnsureSynced(t)
 
 	tests := []struct {
 		network   string

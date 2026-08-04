@@ -15,7 +15,7 @@
     "layers": [
       {
         "name": "global config",
-        "static_layer": {"envoy.deprecated_features:envoy.config.listener.v3.Listener.hidden_envoy_deprecated_use_original_dst":true,"envoy.reloadable_features.fixed_heap_use_allocated":true,"envoy.reloadable_features.http_reject_path_with_fragment":false,"re2.max_program_size.error_level":"32768"}
+        "static_layer": {"envoy.deprecated_features:envoy.config.listener.v3.Listener.hidden_envoy_deprecated_use_original_dst":true,"envoy.reloadable_features.coalesce_lb_rebuilds_on_batch_update":false,"envoy.reloadable_features.fixed_heap_use_allocated":true,"envoy.reloadable_features.http_reject_path_with_fragment":false,"re2.max_program_size.error_level":"32768"}
       },
       {
         "name": "admin",
@@ -345,6 +345,7 @@
       }
       
       
+      
     ],
     "listeners":[
       {
@@ -552,10 +553,10 @@
   
   ,
   "cluster_manager": {
-    "enable_deferred_cluster_creation": true,
     "outlier_detection": {
       "event_log_path": "/dev/stdout"
-    }
+    },
+    "enable_deferred_cluster_creation": true
   }
   ,
   "deferred_stat_options": {

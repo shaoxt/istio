@@ -102,7 +102,7 @@ func hashRuntimeTLSMatchPredicates(match *v1alpha3.TLSMatchAttributes) string {
 
 func buildSidecarOutboundTLSFilterChainOpts(node *model.Proxy, push *model.PushContext, destinationCIDRs []string,
 	service *model.Service, bind string, listenPort *model.Port,
-	gateways sets.String, configs []*config.Config,
+	gateways sets.String, configs []*config.Config, headlessPodCIDR bool,
 ) []*filterChainOpts {
 	if !listenPort.Protocol.IsTLS() {
 		return nil
@@ -137,6 +137,9 @@ func buildSidecarOutboundTLSFilterChainOpts(node *model.Proxy, push *model.PushC
 	for _, cfg := range configs {
 		virtualService := cfg.Spec.(*v1alpha3.VirtualService)
 		for _, tls := range virtualService.Tls {
+			if len(tls.Route) == 0 {
+				continue
+			}
 			for _, match := range tls.Match {
 				if matchTLS(match, node.Labels, gateways, listenPort.Port, node.Metadata.Namespace) {
 					// Use the service's CIDRs.
@@ -207,8 +210,12 @@ func buildSidecarOutboundTLSFilterChainOpts(node *model.Proxy, push *model.PushC
 			svcListenAddress = constants.UnspecifiedIPv6
 		}
 
-		if len(destinationCIDRs) > 0 || len(svcListenAddress) == 0 || (svcListenAddress == actualWildcard && bind == actualWildcard) ||
-			(service.Hostname.IsWildCarded() && service.Resolution == model.DynamicDNS) {
+		// For headless pod CIDR filter chains the destinationCIDRs are per-pod /32 (or /128) host
+		// routes. The CIDR match already uniquely identifies the pod, so SNI-based discrimination
+		// is not needed and must be suppressed — requiring SNI would force callers to match on the
+		// service hostname in addition to the destination IP, which the old per-pod listener never did.
+		if !headlessPodCIDR && (len(destinationCIDRs) > 0 || len(svcListenAddress) == 0 || (svcListenAddress == actualWildcard && bind == actualWildcard) ||
+			(service.Hostname.IsWildCarded() && service.Resolution == model.DynamicDNS)) {
 			sniHosts = []string{string(service.Hostname)}
 			for _, a := range service.Attributes.Aliases {
 				alt := GenerateAltVirtualHosts(a.Hostname.String(), 0, node.DNSDomain)
@@ -248,6 +255,10 @@ TcpLoop:
 	for _, cfg := range configs {
 		virtualService := cfg.Spec.(*v1alpha3.VirtualService)
 		for _, tcp := range virtualService.Tcp {
+			if len(tcp.Route) == 0 {
+				// no routes, skip (validated at admission but config may still arrive without routes)
+				continue
+			}
 			if len(tcp.Match) == 0 {
 				// implicit match
 				out = append(out, &filterChainOpts{

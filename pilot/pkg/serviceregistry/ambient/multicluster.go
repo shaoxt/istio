@@ -58,6 +58,7 @@ func (a *index) buildGlobalCollections(
 	localServiceEntryInformers kclient.Informer[*networkingclient.ServiceEntry],
 	localServiceInformers kclient.Informer[*v1.Service],
 	localAuthzInformers kclient.Informer[*securityclient.AuthorizationPolicy],
+	localWorkloadEntryInformers kclient.Informer[*networkingclient.WorkloadEntry],
 	options Options,
 	opts krt.OptionsBuilder,
 ) {
@@ -191,6 +192,7 @@ func (a *index) buildGlobalCollections(
 		LocalWaypoints,
 		opts,
 	)
+	LocalServiceEntryVisibility := model.ServiceEntryVisibilityCollection(LocalMeshConfig.AsCollection(), opts)
 
 	LocalWorkloadServices := builder.ServicesCollection(
 		localCluster.ID,
@@ -199,6 +201,7 @@ func (a *index) buildGlobalCollections(
 		LocalWaypoints,
 		LocalNamespaces,
 		LocalMeshConfig,
+		LocalServiceEntryVisibility,
 		opts,
 		false, // Don't precompute here; these will just get merged into the global collection later
 	)
@@ -215,6 +218,7 @@ func (a *index) buildGlobalCollections(
 			localServiceEntries,
 			localGatewayClasses,
 			LocalMeshConfig,
+			LocalServiceEntryVisibility,
 			localCluster.Namespaces(),
 			opts,
 		)
@@ -307,6 +311,16 @@ func (a *index) buildGlobalCollections(
 		options.DomainSuffix,
 		opts,
 	)
+	if features.EnableAmbientStatus {
+		workloadEntriesWriter := kclient.NewWriteClient[*networkingclient.WorkloadEntry](localCluster.Client)
+		statusqueue.Register(a.statusQueue, "istio-ambient-workloadentry", GlobalWorkloads,
+			func(info model.WorkloadInfo) (kclient.Patcher, map[string]model.Condition) {
+				if info.Source.Kind != kind.WorkloadEntry {
+					return nil, nil
+				}
+				return kclient.ToPatcher(workloadEntriesWriter), getConditions(info.Source.NamespacedName, localWorkloadEntryInformers)
+			})
+	}
 
 	GlobalWorkloadServiceIndex := krt.NewIndex[string, model.WorkloadInfo](GlobalWorkloads, "service", func(o model.WorkloadInfo) []string {
 		return maps.Keys(o.Workload.Services)
@@ -400,7 +414,7 @@ func (a *index) buildGlobalCollections(
 			// Only trigger push if the XDS object changed; the rest is just for computation of others
 			return a.Workload
 		},
-		PushXdsAddress(a.XDSUpdater, model.WorkloadInfo.ResourceName),
+		PushXdsAddress(a.XDSUpdater, model.WorkloadInfo.ResourceName, model.WorkloadInfo.WaypointRef),
 	), false)
 
 	SplitHorizonWorkloadAddressIndex := krt.NewIndex[networkAddress, model.WorkloadInfo](SplitHorizonWorkloads, "networkAddress", networkAddressFromWorkload)
@@ -501,7 +515,7 @@ func (a *index) buildGlobalCollections(
 				DNSConnectStrategy: a.DNSConnectStrategy,
 			}
 		},
-		PushXdsAddress(a.XDSUpdater, model.ServiceInfo.ResourceName),
+		PushXdsAddress(a.XDSUpdater, model.ServiceInfo.ResourceName, model.ServiceInfo.WaypointRef),
 	), false)
 
 	SplitHorizonServiceAddressIndex := krt.NewIndex[networkAddress, model.ServiceInfo](SplitHorizonServices, "serviceAddress", networkAddressFromService)
@@ -511,40 +525,14 @@ func (a *index) buildGlobalCollections(
 		if s.LabelSelector.Labels[label.GatewayManaged.Name] == constants.ManagedGatewayMeshControllerLabel {
 			return nil
 		}
-		waypoint := s.Service.Waypoint
-		if waypoint == nil {
-			return nil
-		}
-		waypointAddress := waypoint.GetHostname()
-		if waypointAddress == nil {
-			return nil
-		}
-
-		return []NamespaceHostname{{
-			Namespace: waypointAddress.Namespace,
-			Hostname:  waypointAddress.Hostname,
-		}}
+		return serviceOwningWaypointHostnames(s)
 	})
 	SplitHorizonServiceInfosByOwningWaypointIP := krt.NewIndex(SplitHorizonServices, "owningWaypointIp", func(s model.ServiceInfo) []networkAddress {
 		// Filter out waypoint services
 		if s.LabelSelector.Labels[label.GatewayManaged.Name] == constants.ManagedGatewayMeshControllerLabel {
 			return nil
 		}
-		waypoint := s.Service.Waypoint
-		if waypoint == nil {
-			return nil
-		}
-		waypointAddress := waypoint.GetAddress()
-		if waypointAddress == nil {
-			return nil
-		}
-		netip, _ := netip.AddrFromSlice(waypointAddress.Address)
-		netaddr := networkAddress{
-			network: waypointAddress.Network,
-			ip:      netip.String(),
-		}
-
-		return []networkAddress{netaddr}
+		return serviceOwningWaypointAddresses(s)
 	})
 
 	if features.EnableIngressWaypointRouting {
@@ -803,7 +791,7 @@ func (a *index) createSplitHorizonWorkload(
 
 	wi := model.WorkloadInfo{
 		Workload: &wl,
-		Source:   kind.KubernetesGateway,
+		Source:   model.TypedObject{Kind: kind.KubernetesGateway},
 		Labels:   labelutil.AugmentLabels(nil, networkGateway.Cluster, "", "", networkGateway.Network),
 	}
 	return precomputeWorkload(wi)

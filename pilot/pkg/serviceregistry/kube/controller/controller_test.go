@@ -2087,7 +2087,7 @@ func TestEndpointUpdate(t *testing.T) {
 	svc1Ips = append(svc1Ips, "128.0.0.2")
 	updateEndpoints(controller, "svc1", "nsa", portNames, svc1Ips, t)
 	host := string(kube.ServiceHostname("svc1", "nsa", controller.opts.DomainSuffix))
-	fx.MatchOrFail(t, xdsfake.Event{Type: "xds full", ID: host})
+	fx.MatchOrFail(t, xdsfake.Event{Type: "xds", ID: host})
 }
 
 // Validates that when Pilot sees Endpoint before the corresponding Pod, it triggers endpoint event on pod event.
@@ -2216,10 +2216,11 @@ func TestEndpointUpdateBeforePodUpdate(t *testing.T) {
 	addEndpoint("svc", []string{"172.0.1.1", "172.0.1.2", "172.0.1.3"}, []string{"pod1", "pod2", "pod3"})
 	// This is really an implementation detail here - but checking to sanity check our test
 	assertPendingResync(1)
-	// Remove the endpoint again, with no pod events in between. Should have no memory leaks
+	// Remove the endpoint via UPDATE (no pod events in between). needResync must not leak.
+	// Regression: PR #58250 filtered failed pods from the pod cache; an EndpointSlice UPDATE
+	// that removes an IP did not call endpointDeleted, so needResync leaked forever.
 	addEndpoint("svc", []string{"172.0.1.1", "172.0.1.2"}, []string{"pod1", "pod2"})
-	// TODO this case would leak
-	// assertPendingResync(0)
+	assertPendingResync(0)
 
 	// completely remove the endpoint
 	addEndpoint("svc", []string{"172.0.1.1", "172.0.1.2", "172.0.1.3"}, []string{"pod1", "pod2", "pod3"})
@@ -2447,7 +2448,6 @@ func TestVisibilityNoneService(t *testing.T) {
 	controller, fx := NewFakeControllerWithOptions(t, FakeControllerOptions{})
 	serviceHandler := func(_, curr *model.Service, _ model.Event) {
 		pushReq := &model.PushRequest{
-			Full:           true,
 			ConfigsUpdated: sets.New(model.ConfigKey{Kind: kind.ServiceEntry, Name: string(curr.Hostname), Namespace: curr.Attributes.Namespace}),
 			Reason:         model.NewReasonStats(model.ServiceUpdate),
 		}
@@ -2480,7 +2480,7 @@ func TestVisibilityNoneService(t *testing.T) {
 	fx.WaitOrFail(t, "service")
 	host := string(kube.ServiceHostname("svc1", "nsA", controller.opts.DomainSuffix))
 	// We should see a full push.
-	fx.MatchOrFail(t, xdsfake.Event{Type: "xds full", ID: host})
+	fx.MatchOrFail(t, xdsfake.Event{Type: "xds", ID: host})
 }
 
 func TestDiscoverySelector(t *testing.T) {
@@ -2843,6 +2843,20 @@ func TestServiceUpdateNeedsPush(t *testing.T) {
 			Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8081)}},
 		},
 	}
+	nodePortSvc := corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "istio-ingressgateway",
+			Namespace:   "istio-system",
+			Annotations: map[string]string{annotation.TrafficNodeSelector.Name: "{}"},
+		},
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080), NodePort: 30080}},
+		},
+	}
+	updatedNodePortSvc := *nodePortSvc.DeepCopy()
+	updatedNodePortSvc.Spec.Ports = []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080), NodePort: 30081}}
+
 	tests = append(tests,
 		testcase{
 			name:     "target ports changed",
@@ -2858,6 +2872,22 @@ func TestServiceUpdateNeedsPush(t *testing.T) {
 			curr:     &svc,
 			prevConv: kube.ConvertService(svc, nil, constants.DefaultClusterLocalDomain, "", ""),
 			currConv: kube.ConvertService(svc, nil, constants.DefaultClusterLocalDomain, "", ""),
+			expect:   false,
+		},
+		testcase{
+			name:     "node ports changed",
+			prev:     &nodePortSvc,
+			curr:     &updatedNodePortSvc,
+			prevConv: kube.ConvertService(nodePortSvc, nil, constants.DefaultClusterLocalDomain, "cluster-1", ""),
+			currConv: kube.ConvertService(updatedNodePortSvc, nil, constants.DefaultClusterLocalDomain, "cluster-1", ""),
+			expect:   true,
+		},
+		testcase{
+			name:     "node ports unchanged",
+			prev:     &nodePortSvc,
+			curr:     &nodePortSvc,
+			prevConv: kube.ConvertService(nodePortSvc, nil, constants.DefaultClusterLocalDomain, "cluster-1", ""),
+			currConv: kube.ConvertService(nodePortSvc, nil, constants.DefaultClusterLocalDomain, "cluster-1", ""),
 			expect:   false,
 		})
 

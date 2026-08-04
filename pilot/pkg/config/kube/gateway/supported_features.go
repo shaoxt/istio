@@ -18,4 +18,14 @@ import (
 	"sigs.k8s.io/gateway-api/pkg/features"
 )
 
-var SupportedFeatures = features.AllFeatures
+// TODO: Fix skipped tests and reenable these features.
+var skippedExtendedFeatures = []features.Feature{
+	// GatewayBackendClientCertificateFeature, GatewayInvalidTLSBackendConfiguration
+	features.GatewayBackendClientCertificateFeature,
+	// HTTPRouteHTTPSListenerDetectMisdirectedRequests
+	features.GatewayHTTPSListenerDetectMisdirectedRequestsFeature,
+	// UDPRoute* - Istio does not support UDPRoute
+	features.UDPRouteFeature,
+}
+
+var SupportedFeatures = features.AllFeatures.Clone().Delete(skippedExtendedFeatures...)

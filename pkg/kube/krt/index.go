@@ -132,12 +132,7 @@ func (i index[K, O]) Fetch(ctx HandlerContext, key K, opts ...FetchOption) []O {
 
 // nolint: unused // (not true)
 func (i index[K, O]) objectHasKey(obj O, k K) bool {
-	for _, got := range i.extract(obj) {
-		if got == k {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(i.extract(obj), k)
 }
 
 // nolint: unused // (not true)
@@ -313,4 +308,13 @@ func UnnamedIndex[K comparable, O any](
 	key := fmt.Sprintf("%p", extract)
 
 	return NewIndex(c, key, extract)
+}
+
+// FetchIndexObjects fetches all objects from the index that match the given key.
+func FetchIndexObjects[K comparable, O any](ctx HandlerContext, index IndexCollection[K, O], name K) []O {
+	res := FetchOne(ctx, index, FilterKey(toString(name)))
+	if res == nil {
+		return nil
+	}
+	return res.Objects
 }

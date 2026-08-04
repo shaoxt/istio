@@ -31,7 +31,6 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
-	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/reflection"
@@ -68,7 +67,6 @@ import (
 	"istio.io/istio/pkg/config/schema/kind"
 	"istio.io/istio/pkg/ctrlz"
 	"istio.io/istio/pkg/filewatcher"
-	"istio.io/istio/pkg/h2c"
 	istiokeepalive "istio.io/istio/pkg/keepalive"
 	kubelib "istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/inject"
@@ -369,7 +367,10 @@ func NewServer(args *PilotArgs, initFuncs ...func(*Server)) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error initializing sidecar injector: %v", err)
 		}
-		s.readinessFlags.sidecarInjectorReady.Store(true)
+		// Mark webhook ready now here only if it runs on the shared main server.
+		if s.httpsServer == nil {
+			s.readinessFlags.sidecarInjectorReady.Store(true)
+		}
 		s.webhookInfo.mu.Lock()
 		s.webhookInfo.wh = wh
 		s.webhookInfo.mu.Unlock()
@@ -517,6 +518,9 @@ func (s *Server) Start(stop <-chan struct{}) error {
 		if err != nil {
 			return err
 		}
+		// Mark webhooks ready only after the dedicated server has started accepting connections.
+		s.readinessFlags.sidecarInjectorReady.Store(true)
+		s.readinessFlags.configValidationReady.Store(true)
 		go func() {
 			log.Infof("starting webhook service at %s", httpsListener.Addr())
 			if err := s.httpsServer.ServeTLS(httpsListener, "", ""); network.IsUnexpectedListenerError(err) {
@@ -549,7 +553,6 @@ func (s *Server) initSDSServer() {
 		creds := kubecredentials.NewMulticluster(s.clusterID, s.multiclusterController)
 		creds.AddSecretHandler(func(k kind.Kind, name string, namespace string) {
 			s.XDSServer.ConfigUpdate(&model.PushRequest{
-				Full:           false,
 				ConfigsUpdated: sets.New(model.ConfigKey{Kind: k, Name: name, Namespace: namespace}),
 				Reason:         model.NewReasonStats(model.SecretTrigger),
 			})
@@ -635,10 +638,7 @@ func (s *Server) initServers(args *PilotArgs) {
 		log.Infof("multiplexing gRPC on http addr %v", args.ServerOptions.HTTPAddr)
 		multiplexGRPC = true
 	}
-	h2s := &http2.Server{
-		MaxConcurrentStreams: uint32(features.MaxConcurrentStreams),
-	}
-	multiplexHandler := h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	multiplexHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// If we detect gRPC, serve using grpcServer
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("content-type"), "application/grpc") {
 			s.grpcServer.ServeHTTP(w, r)
@@ -646,7 +646,7 @@ func (s *Server) initServers(args *PilotArgs) {
 		}
 		// Otherwise, this is meant for the standard HTTP server
 		s.httpMux.ServeHTTP(w, r)
-	}), h2s)
+	})
 	s.httpServer = &http.Server{
 		Addr:        args.ServerOptions.HTTPAddr,
 		Handler:     s.httpMux,
@@ -659,6 +659,11 @@ func (s *Server) initServers(args *PilotArgs) {
 		s.httpServer.ReadTimeout = 0
 		s.httpServer.ReadHeaderTimeout = 30 * time.Second
 		s.httpServer.Handler = multiplexHandler
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		protocols.SetUnencryptedHTTP2(true)
+		s.httpServer.Protocols = protocols
+		s.httpServer.HTTP2 = &http.HTTP2Config{MaxConcurrentStreams: features.MaxConcurrentStreams}
 	}
 
 	if args.ServerOptions.MonitoringAddr == "" {
@@ -911,7 +916,6 @@ func (s *Server) initRegistryEventHandlers() {
 	// Flush cached discovery responses whenever services configuration change.
 	serviceHandler := func(prev, curr *model.Service, event model.Event) {
 		pushReq := &model.PushRequest{
-			Full:           true,
 			ConfigsUpdated: sets.New(model.ConfigKey{Kind: kind.ServiceEntry, Name: string(curr.Hostname), Namespace: curr.Attributes.Namespace}),
 			Reason:         model.NewReasonStats(model.ServiceUpdate),
 		}
@@ -928,7 +932,6 @@ func (s *Server) initRegistryEventHandlers() {
 				return
 			}
 			pushReq := &model.PushRequest{
-				Full:           true,
 				ConfigsUpdated: sets.New(model.ConfigKey{Kind: gvk.MustToKind(curr.GroupVersionKind), Name: curr.Name, Namespace: curr.Namespace}),
 				Reason:         model.NewReasonStats(model.ConfigUpdate),
 			}
@@ -955,6 +958,10 @@ func (s *Server) initRegistryEventHandlers() {
 			}
 			// Already handled by virtual service controller
 			if schema.GroupVersionKind() == gvk.VirtualService {
+				continue
+			}
+			// Traffic extension controller already emits TrafficExtension events, we should suppress WasmPlugin events
+			if schema.GroupVersionKind() == gvk.WasmPlugin {
 				continue
 			}
 
@@ -1083,8 +1090,8 @@ func (s *Server) createPeerCertVerifier(tlsOptions TLSOptions, trustDomain strin
 		}
 	} else {
 		if s.RA != nil {
-			if strings.HasPrefix(features.PilotCertProvider, constants.CertProviderKubernetesSignerPrefix) {
-				signerName := strings.TrimPrefix(features.PilotCertProvider, constants.CertProviderKubernetesSignerPrefix)
+			if after, ok := strings.CutPrefix(features.PilotCertProvider, constants.CertProviderKubernetesSignerPrefix); ok {
+				signerName := after
 				caBundle, _ := s.RA.GetRootCertFromMeshConfig(signerName)
 				rootCertBytes = append(rootCertBytes, caBundle...)
 			} else {
@@ -1179,6 +1186,8 @@ func (s *Server) initControllers(args *PilotArgs) error {
 		}
 		s.initIPAutoallocateController(args)
 	}
+
+	s.initKubeOptions(args)
 
 	if err := s.initConfigController(args); err != nil {
 		return fmt.Errorf("error initializing config controller: %v", err)
@@ -1320,7 +1329,6 @@ func (s *Server) initMeshHandlers(changeHandler func(_ *meshconfig.MeshConfig)) 
 	s.environment.AddMeshHandler(func() {
 		changeHandler(s.environment.Mesh())
 		s.XDSServer.ConfigUpdate(&model.PushRequest{
-			Full:   true,
 			Reason: model.NewReasonStats(model.GlobalUpdate),
 			Forced: true,
 		})
@@ -1354,7 +1362,6 @@ func (s *Server) initWorkloadTrustBundle(args *PilotArgs) error {
 
 	s.workloadTrustBundle.UpdateCb(func() {
 		pushReq := &model.PushRequest{
-			Full:   true,
 			Reason: model.NewReasonStats(model.GlobalUpdate),
 			Forced: true,
 		}

@@ -60,6 +60,7 @@ values:
     env:
       # Note: support is alpha and env var is tightly scoped
       ENABLE_WILDCARD_HOST_SERVICE_ENTRIES_FOR_TLS: "true"
+      PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
   cni:
     # The CNI repair feature is disabled for these tests because this is a controlled environment,
     # and it is important to catch issues that might otherwise be automatically fixed.
@@ -124,9 +125,6 @@ func TestMain(m *testing.M) {
 			cfg.EnableCNI = true
 			cfg.DeployEastWestGW = false
 			cfg.ControlPlaneValues = ambientControlPlaneValues
-			// impact of agentgateway logic is minimal without deploying the
-			// gatewayclass "istio-agentgateway"
-			cfg.Values["pilot.env.PILOT_ENABLE_AGENTGATEWAY"] = "true"
 
 			if ctx.Settings().NativeNftables {
 				scopes.Framework.Infof("Running the integration tests with nativeNftables enabled")

@@ -206,9 +206,18 @@ func (configgen *ConfigGeneratorImpl) buildGatewayListeners(builder *ListenerBui
 			}
 		}
 	}
+	// Use the connection settings already resolved and cached in NewListenerBuilder.
+	cs := builder.connectionSettings
+
 	listeners := make([]*listener.Listener, 0)
 	for _, ml := range mutableopts {
 		ml.mutable.Listener = buildGatewayListener(*ml.opts, ml.transport)
+
+		// Set listener-level buffer limit from ConnectionSettings.
+		if v := safeUint32(cs.GetListenerPerConnectionBufferLimitBytes()); v != nil {
+			ml.mutable.Listener.PerConnectionBufferLimitBytes = v
+		}
+
 		log.Debugf("buildGatewayListeners: marshaling listener %q with %d filter chains",
 			ml.mutable.Listener.GetName(), len(ml.mutable.Listener.GetFilterChains()))
 
@@ -880,6 +889,9 @@ func (lb *ListenerBuilder) buildGatewayNetworkFiltersFromTCPRoutes(server *netwo
 		// based on the match port/server port and the gateway name
 		for _, tcp := range vsvc.Tcp {
 			if l4MultiMatch(tcp.Match, server, gatewayName) {
+				if len(tcp.Route) == 0 {
+					continue
+				}
 				includeMx := server.GetTls().GetMode() == networking.ServerTLSSettings_ISTIO_MUTUAL
 				return lb.buildOutboundNetworkFilters(tcp.Route, port, v.Meta, includeMx)
 			}
@@ -945,6 +957,9 @@ func (lb *ListenerBuilder) buildGatewayNetworkFiltersFromTLSRoutes(server *netwo
 			// matches, one for 1.foo.com, another for 2.foo.com, this code will produce duplicate filter
 			// chain matches
 			for _, tls := range vsvc.Tls {
+				if len(tls.Route) == 0 {
+					continue
+				}
 				for i, match := range tls.Match {
 					if l4SingleMatch(convertTLSMatchToL4Match(match), server, gatewayName) {
 						// Envoy will reject config that has multiple filter chain matches with the same matching rules
